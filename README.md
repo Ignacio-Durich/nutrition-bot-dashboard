@@ -49,7 +49,7 @@ flowchart LR
     D -.->|optional AI analysis| G
 ```
 
-- **Bot:** a single Python file, [`bot/nutribot.py`](bot/nutribot.py), running as a `systemd` service on a Google Cloud VM, so it restarts on crashes and reboots. It uses a server-side Supabase secret key.
+- **Bot:** a single Python file, [`bot/nutribot.py`](bot/nutribot.py), running as a `systemd` service on an Oracle Cloud Always Free VM, so it restarts on crashes and reboots. It uses a server-side Supabase secret key.
 - **Dashboard:** a static page ([`dashboard/`](dashboard)) with no build step, hosted on Netlify. It only reads data.
 - **Database:** three tables, `comidas` (meals), `metas` (goal history) and `alimentos_frecuentes` (saved foods).
 - **Days end at 04:00 UTC** (UTC-4), so late-night meals count toward the day they belong to. The bot and the dashboard share this rule.
