@@ -208,3 +208,14 @@ def test_knowledge_base_prompt_asks_to_scale_by_the_stated_quantity(nb, sb):
 def test_knowledge_base_prompt_is_empty_without_saved_foods(nb, sb):
     sb.set("alimentos_frecuentes", [])
     assert nb.obtener_base_conocimiento() == ""
+
+
+# --- PALABRAS_CORRECCION ---------------------------------------------------------------
+@pytest.mark.parametrize("texto", ["3 Geras de jamón crudo", "milanesa de ternera", "tomate y pera"])
+def test_new_meal_with_era_inside_a_word_is_not_a_correction(nb, texto):
+    assert not nb.PALABRAS_CORRECCION.search(texto)
+
+
+@pytest.mark.parametrize("texto", ["Era la mitad", "corregir: 300 kcal", "en realidad eran 2"])
+def test_correction_words_are_detected(nb, texto):
+    assert nb.PALABRAS_CORRECCION.search(texto)

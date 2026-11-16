@@ -52,6 +52,8 @@ except FileNotFoundError:
 memoria_usuarios = {}
 estado_metas = {} # Para el asistente guiado de metas
 MACROS = ['calorias', 'proteina_g', 'carbohidratos_g', 'grasas_g']
+# Palabras completas: "era" no debe disparar con "Geras" ni "ternera"
+PALABRAS_CORRECCION = re.compile(r'\b(corregir|cambiar|mitad|agregar|era|en realidad)\b', re.IGNORECASE)
 
 # --- 3. Funciones Auxiliares ---
 def hoy_logico():
@@ -319,7 +321,7 @@ def procesar_texto(message):
         return
 
     memoria_usuarios.setdefault(user_id, {"ultimo_registro_id": None, "ultimo_registro_datos": None})
-    es_correccion = any(palabra in message.text.lower() for palabra in ['corregir', 'cambiar', 'mitad', 'agregar', 'era', 'en realidad'])
+    es_correccion = bool(PALABRAS_CORRECCION.search(message.text))
 
     if es_correccion:
         if not memoria_usuarios[user_id]['ultimo_registro_id']:
