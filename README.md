@@ -21,7 +21,7 @@ It runs 24/7 on a small cloud VM and is used every day by two real people, each 
 - **Log meals by photo or text.** Gemini returns structured JSON (name, kcal, protein, carbs, fat) that is saved per user.
 - **Skips the AI when it can.** Foods you saved before are matched from your own table first, which is faster and cheaper.
 - **Corrections in plain language.** "Make it 300 g instead" edits the last entry, with simple fixes handled by rules and the rest by the model.
-- **Per-user goals.** Each person sets their own daily targets with a guided `/metas` flow. Every goal change is stored as a new row, so the history is kept.
+- **Per-user goals.** Each person sets their own daily targets with a guided `/metas` flow. Every goal change is stored as a new row, so the history is kept, and the dashboard evaluates each past day against the goal it had.
 - **Virtual nutritionist.** `/consulta` answers questions using your recent intake (for example, what to eat for dinner given what is left today).
 - **Model fallback.** If a Gemini model hits its rate limit, the bot retries down a chain of models instead of failing.
 - **Dashboard.** Daily score out of 10, macro rings, 7/14/30-day trends with goal lines, best and worst day, period averages, protein streak, meal list, CSV export, and on-demand AI analysis. Installable as a PWA.
@@ -114,7 +114,7 @@ Needs Node.js only, no dependencies. The suite runs the dashboard in a small DOM
 
 ## Known limitations and roadmap
 
-- **Tests:** 110 dashboard tests (`node tests/e2e_runner.js`) and 80 bot tests (`pytest`, offline, no keys needed). GitHub Actions runs both, plus a scan for committed secrets, on every push and pull request.
+- **Tests:** 113 dashboard tests (`node tests/e2e_runner.js`) and 86 bot tests (`pytest`, offline, no keys needed). GitHub Actions runs both, plus a scan for committed secrets, on every push and pull request.
 - Deployment is manual (upload the file, `sudo systemctl restart nutribot`). A `git pull` or CI-based deploy would be better (CI currently only runs the tests).
 - The bot and dashboard text is in Spanish. Internationalization is not done.
 - No authentication on the dashboard (see above).
@@ -122,7 +122,7 @@ Needs Node.js only, no dependencies. The suite runs the dashboard in a small DOM
 
 ## Tech stack
 
-Python · pyTelegramBotAPI · Google Gemini (google-genai SDK) · Supabase (Postgres) · HTML, Tailwind CSS, Chart.js · Netlify · Google Compute Engine · Node.js (tests)
+Python · pyTelegramBotAPI · Google Gemini (google-genai SDK) · Supabase (Postgres) · HTML, Tailwind CSS, Chart.js · Netlify · Oracle Cloud · Node.js (tests)
 
 ## License
 

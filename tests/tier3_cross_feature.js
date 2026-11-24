@@ -9,7 +9,7 @@ const path = require('path');
 const fs = require('fs');
 const { createNutriNachoEnvironment } = require('./harness/dom_env');
 const { NACHO_ID, MAMA_ID, METAS_FIXTURES } = require('./fixtures/metas_fixtures');
-const { createMeal, createNachoPerfectDay, createNachoTwoPeriodSet, createMamaGapDaysSet } = require('./fixtures/comidas_fixtures');
+const { getLogicalDateString, createMeal, createNachoPerfectDay, createNachoTwoPeriodSet, createMamaGapDaysSet } = require('./fixtures/comidas_fixtures');
 
 // Clean up any stray scratch files from dashboard/
 ['patch.js', 'patch.py', 'test.js'].forEach(f => {
@@ -295,6 +295,88 @@ const tier3Tests = [
                 !swContent.includes("JSON.stringify({data: [], error: null})"),
                 'sw.js must NOT contain the old {data:[], error:null} fallback format'
             );
+        }
+    },
+    {
+        id: 'T3-XF-10',
+        feature: 'Security',
+        description: 'Regression: meal fields are HTML-escaped before reaching innerHTML (XSS)',
+        run: async () => {
+            const payload = `<img src=x onerror="alert('1')"> Mac & Cheese`;
+            const env = createNutriNachoEnvironment({
+                silent: true,
+                supabase: {
+                    metas: [METAS_FIXTURES.nachoActive],
+                    comidas: [{ ...createMeal({ comida: payload }), calorias: '<b>1</b>' }]
+                }
+            });
+            env.runScript();
+            await env.sandbox.loadAll();
+
+            const html = env.document.getElementById('meals-body').innerHTML;
+            assert(!html.includes('<img') && !html.includes('<b>'), 'Raw HTML from a meal must not reach innerHTML');
+            assert(
+                html.includes('&#60;img src=x onerror=&#34;alert(&#39;1&#39;)&#34;&#62; Mac &#38; Cheese'),
+                'Meal name must be shown as escaped text'
+            );
+        }
+    },
+    {
+        id: 'T3-XF-11',
+        feature: 'R1+R2+R3+R5',
+        description: 'Regression: each past day is evaluated against its own goal, not the current one',
+        run: async () => {
+            const day = getLogicalDateString;
+            const oldGoal = { id: 1, usuario_id: NACHO_ID, calorias: 2000, proteina_g: 100, carbohidratos_g: 250, grasas_g: 66, fecha_creacion: `${day(-40)}T12:00:00+00:00` };
+            const newGoal = { id: 2, usuario_id: NACHO_ID, calorias: 1500, proteina_g: 150, carbohidratos_g: 120, grasas_g: 46, fecha_creacion: `${day(-1)}T23:00:00+00:00` };
+            // A meal that hits `goal` exactly, saved with `meta_id`
+            const hit = (goal, dayOffset, meta_id) => ({
+                ...createMeal({ dayOffset, calorias: goal.calorias, proteina_g: goal.proteina_g, carbohidratos_g: goal.carbohidratos_g, grasas_g: goal.grasas_g }),
+                meta_id
+            });
+            const env = createNutriNachoEnvironment({
+                silent: true,
+                supabase: {
+                    metas: [oldGoal, newGoal],
+                    comidas: [
+                        hit(oldGoal, -4, null), // no meta_id: goal in force that day
+                        hit(oldGoal, -3, 2),    // logged late, after the goal changed: that goal did not exist yet
+                        // -2: no meals
+                        hit(oldGoal, -1, 1),    // goal changed at night, after the last meal
+                        hit(newGoal, 0, 2)
+                    ]
+                }
+            });
+            env.runScript();
+            await env.sandbox.loadAll();
+            const text = id => env.document.getElementById(id).textContent;
+
+            const [bars, , goalLine] = env.chartMock.findChartByCanvasId('chartCal').data.datasets;
+            assert.deepStrictEqual([...goalLine.data], [2000, 2000, 2000, 2000, 2000, 2000, 1500], 'Goal line must follow each day');
+            assert(!bars.backgroundColor.some(c => c.includes('239, 68, 68')), 'No day went over its own goal');
+            assert.strictEqual(text('streak-count'), '4', 'Protein streak must use each day\'s goal');
+            assert.strictEqual(text('best-day-score'), '10.0/10');
+            assert.strictEqual(text('worst-day-score'), '10.0/10', 'Old days hit their own goal');
+            ['cal', 'prot', 'carb', 'grasas'].forEach(k =>
+                assert.strictEqual(text(`avg-${k}-diff`), 'En meta ✓', `${k} average must be compared with the average goal`));
+            assert.strictEqual(text('cal-meta'), '1500', 'Today keeps the current goal');
+        }
+    },
+    {
+        id: 'T3-XF-12',
+        feature: 'R1',
+        description: 'Days before the first saved goal use the default goal',
+        run: async () => {
+            const goal = { ...METAS_FIXTURES.nachoActive, fecha_creacion: `${getLogicalDateString(0)}T12:00:00+00:00` };
+            const env = createNutriNachoEnvironment({
+                silent: true,
+                supabase: { metas: [goal], comidas: [createMeal({ dayOffset: -2 })] }
+            });
+            env.runScript();
+            await env.sandbox.loadAll();
+
+            const goalLine = env.chartMock.findChartByCanvasId('chartCal').data.datasets[2];
+            assert.deepStrictEqual([...goalLine.data], [2300, 2300, 2300, 2300, 2300, 2300, goal.calorias]);
         }
     }
 ];

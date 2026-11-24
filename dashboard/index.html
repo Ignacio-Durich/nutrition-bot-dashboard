@@ -553,6 +553,11 @@
         return `${d}/${m}`;
     }
 
+    // Text from the database is untrusted: escape it before it goes into innerHTML
+    function escapeHTML(val) {
+        return String(val).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
+    }
+
     function pctColor(pct) {
         if (pct <= 85) return '#3b82f6';   // blue – on track
         if (pct <= 100) return '#10b981';  // green – close/hit
@@ -607,8 +612,7 @@
                 .from('metas')
                 .select('*')
                 .eq('usuario_id', userId)
-                .order('fecha_creacion', { ascending: false })
-                .limit(1);
+                .order('fecha_creacion', { ascending: false });
 
             if (error) {
                 console.warn(`[Supabase metas] Query error for user ${userId}:`, error.message || error);
@@ -619,20 +623,32 @@
                 return { ...fallback };
             }
 
-            const latest = data[0];
-            return {
-                nombre: fallback.nombre,
-                emoji: fallback.emoji,
-                cal: (typeof latest.calorias === 'number' && latest.calorias > 0) ? latest.calorias : fallback.cal,
-                prot: (typeof latest.proteina_g === 'number' && latest.proteina_g > 0) ? latest.proteina_g : fallback.prot,
-                carb: (typeof latest.carbohidratos_g === 'number' && latest.carbohidratos_g > 0) ? latest.carbohidratos_g : fallback.carb,
-                grasas: (typeof latest.grasas_g === 'number' && latest.grasas_g > 0) ? latest.grasas_g : fallback.grasas,
-                fecha_creacion: latest.fecha_creacion || null
-            };
+            const pick = (value, def) => (typeof value === 'number' && value > 0) ? value : def;
+            const historial = data.map(row => ({
+                id: row.id,
+                desde: row.fecha_creacion ? fechaLogica(row.fecha_creacion) : '',
+                cal: pick(row.calorias, fallback.cal),
+                prot: pick(row.proteina_g, fallback.prot),
+                carb: pick(row.carbohidratos_g, fallback.carb),
+                grasas: pick(row.grasas_g, fallback.grasas)
+            }));
+            const { cal, prot, carb, grasas } = historial[0];
+            return { nombre: fallback.nombre, emoji: fallback.emoji, cal, prot, carb, grasas, historial };
         } catch (err) {
             console.warn(`[fetchMetas] Exception for user ${userId}:`, err);
             return { ...fallback };
         }
+    }
+
+    // Goal a day is evaluated against. Today: the current goal. Past days: the goal saved with
+    // that day's meals (meta_id), else the goal in force that day, else the default.
+    // Goals created after the day are ignored (a meal logged late carries the newer meta_id).
+    function metaDelDia(dia, dayData) {
+        const u = USUARIOS[currentUser];
+        if (dia >= hoyLogico()) return u;
+        const vigentes = (u.historial || []).filter(m => m.desde <= dia); // newest first
+        const ids = new Set(dayData ? dayData.meals.map(m => m.meta_id) : []);
+        return vigentes.find(m => ids.has(m.id)) || vigentes[0] || USUARIOS_DEFAULT[currentUser];
     }
 
     async function fetchComidas(days) {
@@ -885,7 +901,7 @@
     // RENDER: STREAK
     // ============================
     function renderStreak(grouped) {
-        const u = USUARIOS[currentUser];
+        const cumpleProt = day => grouped[day].prot >= metaDelDia(day, grouped[day]).prot - 10;
         const allDays = Object.keys(grouped).sort();
         let streak = 0;
         let record = 0;
@@ -893,7 +909,7 @@
 
         // For current streak: count consecutive days from today backwards where protein >= meta - 10
         for (const day of [...allDays].reverse()) {
-            if (grouped[day].prot >= u.prot - 10) {
+            if (cumpleProt(day)) {
                 streak++;
             } else {
                 break;
@@ -902,7 +918,7 @@
 
         // For record: scan all days
         for (const day of allDays) {
-            if (grouped[day].prot >= u.prot - 10) {
+            if (cumpleProt(day)) {
                 tempStreak++;
                 if (tempStreak > record) record = tempStreak;
             } else {
@@ -948,7 +964,7 @@
         }
     };
 
-    function makeChart(canvasId, labels, data, goalValue, barColor, goalLabel, missingFlags = []) {
+    function makeChart(canvasId, labels, data, goals, barColor, unit, missingFlags = []) {
         const ctx = document.getElementById(canvasId);
 
         // Helper to check if day index is missing
@@ -961,7 +977,7 @@
             if (isMissing(i)) {
                 return 'rgba(100, 116, 139, 0.25)'; // slate/gray for missing day
             }
-            return v > goalValue ? 'rgba(239, 68, 68, 0.6)' : barColor;
+            return v > goals[i] ? 'rgba(239, 68, 68, 0.6)' : barColor;
         });
 
         // 7-day moving average gracefully handling missing days (preserves active average, avoids plummeting to 0)
@@ -993,7 +1009,7 @@
                     if (val === null || val === undefined) return null;
                     return `Promedio (7d): ${val}`;
                 }
-                return goalLabel; // goal line
+                return `Meta (${goals[idx]}${unit})`; // goal line
             }
         };
 
@@ -1002,7 +1018,7 @@
             ch.data.labels = labels;
             Object.assign(ch.data.datasets[0], { data, backgroundColor: bgColors });
             ch.data.datasets[1].data = movingAvg;
-            Object.assign(ch.data.datasets[2], { data: labels.map(() => goalValue), label: goalLabel });
+            ch.data.datasets[2].data = goals;
             ch.options.plugins.tooltip.callbacks = tooltipCallbacks;
             ch.update();
             return;
@@ -1036,10 +1052,11 @@
                         order: 0
                     },
                     {
-                        // Goal line: flat dashed line at the daily goal
-                        label: goalLabel,
-                        data: labels.map(() => goalValue),
+                        // Goal line: dashed, steps when the goal changed
+                        label: 'Meta',
+                        data: goals,
                         type: 'line',
+                        stepped: 'middle',
                         borderColor: 'rgba(239, 68, 68, 0.6)',
                         borderDash: [6, 4],
                         borderWidth: 2,
@@ -1063,8 +1080,8 @@
     }
 
     function renderCharts(grouped) {
-        const u = USUARIOS[currentUser];
         const allDays = ultimosDias(currentRange);
+        const metas = allDays.map(d => metaDelDia(d, grouped[d]));
 
         // Missing day detection: !grouped[d] || !grouped[d].meals || grouped[d].meals.length === 0
         const missingFlags = allDays.map(d => !grouped[d] || !grouped[d].meals || grouped[d].meals.length === 0);
@@ -1077,10 +1094,10 @@
         const carbData = allDays.map(d => grouped[d] ? grouped[d].carb : 0);
         const grasasData = allDays.map(d => grouped[d] ? grouped[d].grasas : 0);
 
-        makeChart('chartCal', labels, calData, u.cal, 'rgba(59, 130, 246, 0.6)', `Meta (${u.cal})`, missingFlags);
-        makeChart('chartProt', labels, protData, u.prot, 'rgba(16, 185, 129, 0.6)', `Meta (${u.prot}g)`, missingFlags);
-        makeChart('chartCarb', labels, carbData, u.carb, 'rgba(245, 158, 11, 0.6)', `Meta (${u.carb}g)`, missingFlags);
-        makeChart('chartGrasas', labels, grasasData, u.grasas, 'rgba(139, 92, 246, 0.6)', `Meta (${u.grasas}g)`, missingFlags);
+        makeChart('chartCal', labels, calData, metas.map(m => m.cal), 'rgba(59, 130, 246, 0.6)', '', missingFlags);
+        makeChart('chartProt', labels, protData, metas.map(m => m.prot), 'rgba(16, 185, 129, 0.6)', 'g', missingFlags);
+        makeChart('chartCarb', labels, carbData, metas.map(m => m.carb), 'rgba(245, 158, 11, 0.6)', 'g', missingFlags);
+        makeChart('chartGrasas', labels, grasasData, metas.map(m => m.grasas), 'rgba(139, 92, 246, 0.6)', 'g', missingFlags);
     }
 
     // ============================
@@ -1120,22 +1137,25 @@
         };
     }
 
-    // Per-day averages over the days in `dates` that have meals
+    // Per-day averages (and average goal) over the days in `dates` that have meals
     function promediosPeriodo(grouped, dates) {
         const logged = dates.filter(d => grouped[d] && grouped[d].meals && grouped[d].meals.length > 0);
-        const avg = k => Math.round(logged.reduce((sum, d) => sum + (grouped[d][k] || 0), 0) / Math.max(1, logged.length));
-        return { days: logged.length, cal: avg('cal'), prot: avg('prot'), carb: avg('carb'), grasas: avg('grasas') };
+        const avg = (rows, k) => Math.round(rows.reduce((sum, r) => sum + (r[k] || 0), 0) / Math.max(1, rows.length));
+        const macros = rows => ({ cal: avg(rows, 'cal'), prot: avg(rows, 'prot'), carb: avg(rows, 'carb'), grasas: avg(rows, 'grasas') });
+        return {
+            days: logged.length,
+            ...macros(logged.map(d => grouped[d])),
+            meta: macros(logged.map(d => metaDelDia(d, grouped[d])))
+        };
     }
 
     function renderAverages(grouped) {
-        const u = USUARIOS[currentUser];
         const curr = promediosPeriodo(grouped, ultimosDias(currentRange));
         const prev = promediosPeriodo(grouped, ultimosDias(currentRange, currentRange));
 
         const units = { cal: ' kcal', prot: 'g', carb: 'g', grasas: 'g' };
 
         Object.entries(units).forEach(([key, unit]) => {
-            const goal = u[key];
             const valEl = document.getElementById(`avg-${key}`);
             const diffEl = document.getElementById(`avg-${key}-diff`);
             const deltaNode = document.getElementById(`pop-${key}-delta`);
@@ -1149,7 +1169,7 @@
             } else {
                 if (valEl) valEl.textContent = curr[key] + unit;
                 if (diffEl) {
-                    const d = diffLabel(curr[key], goal);
+                    const d = diffLabel(curr[key], curr.meta[key]);
                     diffEl.textContent = d.text;
                     diffEl.className = `text-xs mt-0.5 ${d.cls}`;
                 }
@@ -1172,8 +1192,8 @@
                 if (key === 'prot') {
                     isFavorable = deltaRes.delta_pct > 2;
                 } else {
-                    const currDev = Math.abs(curr[key] - goal);
-                    const prevDev = Math.abs(prevVal - goal);
+                    const currDev = Math.abs(curr[key] - curr.meta[key]);
+                    const prevDev = Math.abs(prevVal - prev.meta[key]);
                     isFavorable = currDev < prevDev;
                 }
                 badgeCls = isFavorable
@@ -1189,12 +1209,12 @@
     // ============================
     // RENDER: BEST & WORST DAYS (R3)
     // ============================
-    function calculateBestWorstDays(grouped, rangeDays, goals) {
-        const u = goals || USUARIOS[currentUser];
+    function calculateBestWorstDays(grouped, rangeDays) {
         const candidates = ultimosDias(rangeDays || currentRange)
             .filter(date => grouped && grouped[date] && grouped[date].meals && grouped[date].meals.length > 0)
             .map(date => {
                 const day = grouped[date];
+                const u = metaDelDia(date, day);
                 const { score, scoreText, rating, badgeClass } = calculateDailyScore(day, u);
                 return {
                     date, score, scoreText, rating, badgeClass,
@@ -1232,7 +1252,7 @@
     }
 
     function renderBestWorstDays(grouped) {
-        const res = calculateBestWorstDays(grouped, currentRange, USUARIOS[currentUser]);
+        const res = calculateBestWorstDays(grouped, currentRange);
 
         const bestDateEl = document.getElementById('best-day-date');
         const worstDateEl = document.getElementById('worst-day-date');
@@ -1339,11 +1359,11 @@
         countEl.textContent = `${meals.length} comida${meals.length > 1 ? 's' : ''}`;
         tbody.innerHTML = meals.map(m => `
             <tr class="meal-row border-b border-slate-700/30">
-                <td class="py-3 pr-4 text-slate-200 font-medium">${m.comida || 'Sin nombre'}</td>
-                <td class="py-3 px-2 text-right text-blue-400 font-semibold">${m.calorias || 0}</td>
-                <td class="py-3 px-2 text-right text-emerald-400">${m.proteina_g || 0}g</td>
-                <td class="py-3 px-2 text-right text-amber-400">${m.carbohidratos_g || 0}g</td>
-                <td class="py-3 pl-2 text-right text-violet-400">${m.grasas_g || 0}g</td>
+                <td class="py-3 pr-4 text-slate-200 font-medium">${escapeHTML(m.comida || 'Sin nombre')}</td>
+                <td class="py-3 px-2 text-right text-blue-400 font-semibold">${escapeHTML(m.calorias || 0)}</td>
+                <td class="py-3 px-2 text-right text-emerald-400">${escapeHTML(m.proteina_g || 0)}g</td>
+                <td class="py-3 px-2 text-right text-amber-400">${escapeHTML(m.carbohidratos_g || 0)}g</td>
+                <td class="py-3 pl-2 text-right text-violet-400">${escapeHTML(m.grasas_g || 0)}g</td>
             </tr>
         `).join('');
     }
@@ -1436,12 +1456,13 @@
         const days = Object.keys(allGroupedData).sort().slice(-currentRange);
         
         let promptText = `Actúa como un experto en nutrición y analiza de manera directa y al punto mi progreso de los últimos ${currentRange} días.\n`;
-        promptText += `Mi meta diaria es: Calorías: ${u.cal}kcal, Proteínas: ${u.prot}g, Carbos: ${u.carb}g, Grasas: ${u.grasas}g.\n\n`;
-        promptText += `Aquí están mis datos diarios consumidos:\n`;
+        promptText += `Mi meta diaria actual es: Calorías: ${u.cal}kcal, Proteínas: ${u.prot}g, Carbos: ${u.carb}g, Grasas: ${u.grasas}g.\n\n`;
+        promptText += `Aquí están mis datos diarios consumidos, con la meta vigente de cada día:\n`;
         
         days.forEach(d => {
             const data = allGroupedData[d];
-            promptText += `- ${formatDate(d)}: Calorías: ${data.cal}kcal, Proteínas: ${data.prot}g, Carbos: ${data.carb}g, Grasas: ${data.grasas}g\n`;
+            const meta = metaDelDia(d, data);
+            promptText += `- ${formatDate(d)}: Calorías: ${data.cal}kcal, Proteínas: ${data.prot}g, Carbos: ${data.carb}g, Grasas: ${data.grasas}g (meta: ${meta.cal}kcal, ${meta.prot}g P, ${meta.carb}g C, ${meta.grasas}g G)\n`;
         });
         
         promptText += `\nDevuelve el análisis formateado exclusivamente en HTML usando esta estructura exacta y sin usar Markdown (NO envuelvas en \`\`\`html):
