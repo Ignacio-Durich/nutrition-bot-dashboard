@@ -28,7 +28,8 @@ DASHBOARD_URL = os.getenv('DASHBOARD_URL')  # optional: public URL of the web da
 
 # --- 2. Inicialización ---
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
-gemini = genai.Client(api_key=GEMINI_API_KEY)
+TIMEOUT_GEMINI = 30  # segundos por modelo; sin esto, un modelo que no responde cuelga el bot
+gemini = genai.Client(api_key=GEMINI_API_KEY, http_options=types.HttpOptions(timeout=TIMEOUT_GEMINI * 1000))
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 MODELOS_FALLBACK = [
     'gemini-3.8-flash',       # 1° Más nuevo y preciso (5 RPM, 20 RPD)
@@ -79,7 +80,7 @@ def obtener_meta_actual(user_id):
 
 def es_error_limite(error):
     error_str = str(error).lower()
-    return any(palabra in error_str for palabra in ['rate limit', 'quota', 'resource exhausted', '429', 'too many requests', 'overloaded', '503', 'unavailable', 'high demand'])
+    return any(palabra in error_str for palabra in ['rate limit', 'quota', 'resource exhausted', '429', 'too many requests', 'overloaded', '503', 'unavailable', 'high demand', 'timed out', '504', 'deadline'])
 
 # Modelos que acaban de devolver error de cuota o sobrecarga se saltean un rato,
 # para no gastar un pedido fallido (y esperar) en cada mensaje.
