@@ -82,7 +82,7 @@ def obtener_meta_actual(user_id):
 def es_error_limite(error):
     # El código HTTP, no el texto: un mensaje como "15042 tokens" contiene "504"
     if isinstance(error, errors.APIError):
-        return error.code in (429, 503, 504)
+        return isinstance(error, errors.ServerError) or error.code == 429  # ServerError = todo 5xx
     return isinstance(error, httpx.TimeoutException)
 
 # Modelos que acaban de devolver error de cuota o sobrecarga se saltean un rato,
