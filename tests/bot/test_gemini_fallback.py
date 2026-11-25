@@ -1,3 +1,4 @@
+import httpx
 import pytest
 from google.genai import errors
 
@@ -151,3 +152,19 @@ def test_connection_errors_do_not_put_a_model_on_hold(nb, fake_gemini, clock):
     fake_gemini({MODELS[0]: [ConnectionError("reset"), ConnectionError("reset")], MODELS[1]: "ok"})
     nb.llamar_gemini("a")
     assert nb.modelos_en_espera == {}
+
+
+# --- hanging models ----------------------------------------------------------------------
+def test_gemini_client_has_a_timeout(nb):
+    assert nb.gemini._api_client._http_options.timeout == nb.TIMEOUT_GEMINI * 1000
+
+
+@pytest.mark.parametrize("error", [
+    httpx.ReadTimeout("timed out"),
+    errors.ServerError(504, {"error": {"code": 504, "message": "Deadline expired", "status": "DEADLINE_EXCEEDED"}}),
+])
+def test_hanging_model_is_paused_and_the_next_one_answers(nb, fake_gemini, error):
+    g = fake_gemini({MODELS[0]: error, MODELS[1]: "ok"})
+    assert nb.llamar_gemini("p") == "ok"
+    assert [m for m, _ in g.calls] == MODELS[:2]
+    assert MODELS[0] in nb.modelos_en_espera
