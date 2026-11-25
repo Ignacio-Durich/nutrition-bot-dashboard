@@ -613,6 +613,49 @@ const tier2Tests = [
         }
     },
     {
+        id: 'T2-AI-01',
+        feature: 'AI',
+        description: 'AI analysis uses the last N calendar days, not the last N days with meals',
+        run: async () => {
+            const env = createNutriNachoEnvironment({
+                silent: true,
+                supabase: { comidas: [0, -2, -6, -7, -9, -12].map(dayOffset => createMeal({ dayOffset, calorias: 1000 - dayOffset })) }
+            });
+            let prompt = '';
+            env.window.NUTRI_CONFIG = { GEMINI_API_KEY: 'test' };
+            env.sandbox.fetch = async (_url, req) => {
+                prompt = JSON.parse(req.body).contents[0].parts[0].text;
+                return { json: async () => ({ candidates: [{ content: { parts: [{ text: 'ok' }] } }] }) };
+            };
+            env.runScript();
+            await env.sandbox.loadAll();
+            await env.sandbox.generateAIAnalysis();
+            const cals = [...prompt.matchAll(/^- .*?Calorías: (\d+)kcal/gm)].map(m => Number(m[1]));
+            assert.deepStrictEqual(cals, [1006, 1002, 1000]);
+        }
+    },
+    {
+        id: 'T2-AI-02',
+        feature: 'AI',
+        description: 'AI analysis does not call Gemini when the period has no meals',
+        run: async () => {
+            const env = createNutriNachoEnvironment({
+                silent: true,
+                supabase: { comidas: [createMeal({ dayOffset: -9 })] }
+            });
+            let calls = 0;
+            env.window.NUTRI_CONFIG = { GEMINI_API_KEY: 'test' };
+            env.sandbox.fetch = async () => { calls++; return { json: async () => ({}) }; };
+            env.runScript();
+            await env.sandbox.loadAll();
+            await env.sandbox.generateAIAnalysis();
+            const content = env.document.getElementById('ai-analysis-content');
+            assert.strictEqual(calls, 0, 'No quota must be spent without data');
+            assert(content.textContent.includes('No hay comidas'), `Got: "${content.textContent}"`);
+            assert(!content.classList.contains('hidden'), 'The notice must be visible');
+        }
+    },
+    {
         id: 'T2-R6-05',
         feature: 'R6',
         description: 'R6-Edge: manifest.json schema specifies standalone, theme_color #0f172a, and icons',

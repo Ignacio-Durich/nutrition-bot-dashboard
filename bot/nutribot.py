@@ -1,8 +1,9 @@
 import os
+import httpx
 import telebot
 from dotenv import load_dotenv
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 from supabase import create_client
 import json
 import time
@@ -27,7 +28,7 @@ SUPABASE_KEY = _require_env('SUPABASE_KEY')
 DASHBOARD_URL = os.getenv('DASHBOARD_URL')  # optional: public URL of the web dashboard
 
 # --- 2. Inicialización ---
-bot = telebot.TeleBot(TELEGRAM_TOKEN)
+bot = telebot.TeleBot(TELEGRAM_TOKEN, num_threads=4)  # con 2 (default), dos pedidos colgados frenan todo el bot
 TIMEOUT_GEMINI = 30  # segundos por modelo; sin esto, un modelo que no responde cuelga el bot
 gemini = genai.Client(api_key=GEMINI_API_KEY, http_options=types.HttpOptions(timeout=TIMEOUT_GEMINI * 1000))
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -79,8 +80,10 @@ def obtener_meta_actual(user_id):
     return None
 
 def es_error_limite(error):
-    error_str = str(error).lower()
-    return any(palabra in error_str for palabra in ['rate limit', 'quota', 'resource exhausted', '429', 'too many requests', 'overloaded', '503', 'unavailable', 'high demand', 'timed out', '504', 'deadline'])
+    # El código HTTP, no el texto: un mensaje como "15042 tokens" contiene "504"
+    if isinstance(error, errors.APIError):
+        return error.code in (429, 503, 504)
+    return isinstance(error, httpx.TimeoutException)
 
 # Modelos que acaban de devolver error de cuota o sobrecarga se saltean un rato,
 # para no gastar un pedido fallido (y esperar) en cada mensaje.
@@ -117,7 +120,7 @@ def llamar_gemini(prompt_o_contenido, intentos_por_modelo=2, espera_base=2):
                 if es_error_limite(e):
                     modelos_en_espera[nombre_modelo] = _ahora() + espera_para_error(e)
                     break
-                elif isinstance(e, (ConnectionError, TimeoutError)) or any(p in str(e).lower() for p in ['connection', 'timeout', 'reset']):
+                elif isinstance(e, (ConnectionError, TimeoutError, httpx.TransportError)):
                     if intento < intentos_por_modelo:
                         time.sleep(espera)
                         espera *= 2

@@ -68,12 +68,14 @@ def nb(tmp_path_factory):
     env_clear = ["DASHBOARD_URL"]
     with mock.patch.dict(os.environ, env), \
          mock.patch("dotenv.load_dotenv", lambda *a, **k: False), \
-         mock.patch("supabase.create_client", lambda *a, **k: FakeSupabase()):
+         mock.patch("supabase.create_client", lambda *a, **k: FakeSupabase()), \
+         mock.patch("google.genai.Client") as genai_client:
         for name in env_clear:
             os.environ.pop(name, None)
         spec = importlib.util.spec_from_file_location("nutribot", BOT_FILE)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
+    module.genai_client = genai_client
     return module
 
 
