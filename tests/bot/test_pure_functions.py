@@ -38,11 +38,12 @@ def test_limpiar_decimales_keeps_other_keys_and_missing_macros(nb):
 
 # --- es_error_limite -------------------------------------------------------------------
 def api_error(code, message=""):
-    return errors.APIError(code, {"error": {"code": code, "message": message}})
+    cls = errors.ServerError if code >= 500 else errors.ClientError  # same split as the SDK
+    return cls(code, {"error": {"code": code, "message": message}})
 
 
 @pytest.mark.parametrize("error", [
-    api_error(429, "quota exceeded"), api_error(503, "high demand"), api_error(504, "Deadline expired"),
+    api_error(429, "quota exceeded"), api_error(500, "INTERNAL"), api_error(502), api_error(503, "high demand"), api_error(504, "Deadline expired"),
     httpx.ReadTimeout("timed out"), httpx.ConnectTimeout("timed out"),
 ], ids=repr)
 def test_es_error_limite_true(nb, error):

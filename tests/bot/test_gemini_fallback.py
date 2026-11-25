@@ -47,6 +47,13 @@ def test_503_high_demand_moves_to_next_model(nb, fake_gemini):
     assert [m for m, _ in g.calls] == MODELS[:2]
 
 
+def test_500_internal_moves_to_next_model(nb, fake_gemini):
+    error = errors.ServerError(500, {"error": {"code": 500, "message": "internal error", "status": "INTERNAL"}})
+    g = fake_gemini({MODELS[0]: error, MODELS[1]: "ok"})
+    assert nb.llamar_gemini("p") == "ok"
+    assert [m for m, _ in g.calls] == MODELS[:2]
+
+
 def test_connection_error_is_retried_then_next_model(nb, fake_gemini):
     g = fake_gemini({MODELS[0]: [ConnectionError("reset"), ConnectionError("reset")], MODELS[1]: "ok"})
     assert nb.llamar_gemini("p") == "ok"
