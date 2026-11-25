@@ -156,7 +156,7 @@ def test_connection_errors_do_not_put_a_model_on_hold(nb, fake_gemini, clock):
 
 # --- hanging models ----------------------------------------------------------------------
 def test_gemini_client_has_a_timeout(nb):
-    assert nb.gemini._api_client._http_options.timeout == nb.TIMEOUT_GEMINI * 1000
+    assert nb.genai_client.call_args.kwargs["http_options"].timeout == nb.TIMEOUT_GEMINI * 1000
 
 
 @pytest.mark.parametrize("error", [
@@ -168,3 +168,20 @@ def test_hanging_model_is_paused_and_the_next_one_answers(nb, fake_gemini, error
     assert nb.llamar_gemini("p") == "ok"
     assert [m for m, _ in g.calls] == MODELS[:2]
     assert MODELS[0] in nb.modelos_en_espera
+
+
+@pytest.mark.parametrize("message", ["request has 15042 tokens", "Invalid image: connection reset timeout"])
+def test_invalid_request_is_not_repeated_on_every_model(nb, fake_gemini, message):
+    error = errors.ClientError(400, {"error": {"code": 400, "message": message, "status": "INVALID_ARGUMENT"}})
+    g = fake_gemini({m: error for m in MODELS})
+    with pytest.raises(errors.ClientError):
+        nb.llamar_gemini("p")
+    assert [m for m, _ in g.calls] == MODELS[:1]
+    assert nb.modelos_en_espera == {}
+
+
+def test_dropped_connection_is_retried_then_next_model(nb, fake_gemini):
+    error = httpx.RemoteProtocolError("Server disconnected without sending a response.")
+    g = fake_gemini({MODELS[0]: [error, error], MODELS[1]: "ok"})
+    assert nb.llamar_gemini("p") == "ok"
+    assert [m for m, _ in g.calls] == [MODELS[0], MODELS[0], MODELS[1]]

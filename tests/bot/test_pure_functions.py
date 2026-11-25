@@ -1,4 +1,6 @@
+import httpx
 import pytest
+from google.genai import errors
 
 from conftest import NACHO
 
@@ -35,19 +37,26 @@ def test_limpiar_decimales_keeps_other_keys_and_missing_macros(nb):
 
 
 # --- es_error_limite -------------------------------------------------------------------
-@pytest.mark.parametrize("msg", [
-    "429 RESOURCE_EXHAUSTED. You exceeded your current quota",
-    "Too Many Requests",
-    "model is overloaded",
-    "503 UNAVAILABLE. This model is currently experiencing high demand",
-])
-def test_es_error_limite_true(nb, msg):
-    assert nb.es_error_limite(Exception(msg))
+def api_error(code, message=""):
+    return errors.APIError(code, {"error": {"code": code, "message": message}})
 
 
-@pytest.mark.parametrize("msg", ["400 INVALID_ARGUMENT. API key not valid", "JSON malformado", "404 model not found"])
-def test_es_error_limite_false(nb, msg):
-    assert not nb.es_error_limite(Exception(msg))
+@pytest.mark.parametrize("error", [
+    api_error(429, "quota exceeded"), api_error(503, "high demand"), api_error(504, "Deadline expired"),
+    httpx.ReadTimeout("timed out"), httpx.ConnectTimeout("timed out"),
+], ids=repr)
+def test_es_error_limite_true(nb, error):
+    assert nb.es_error_limite(error)
+
+
+@pytest.mark.parametrize("error", [
+    api_error(400, "API key not valid"), api_error(404, "model not found"),
+    # The status code decides, not numbers or words inside the message
+    api_error(400, "request has 15042 tokens"), api_error(400, "Invalid image: file size 5041 KB"),
+    api_error(400, "quota 429 503 unavailable"), ValueError("JSON malformado 429"),
+], ids=repr)
+def test_es_error_limite_false(nb, error):
+    assert not nb.es_error_limite(error)
 
 
 # --- corregir_sin_ia -------------------------------------------------------------------

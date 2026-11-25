@@ -1447,13 +1447,19 @@
             return;
         }
 
+        const days = ultimosDias(currentRange).filter(d => allGroupedData[d]);
+        if (days.length === 0) {
+            content.innerHTML = '<p class="text-amber-400">No hay comidas registradas en este período.</p>';
+            content.classList.remove('hidden');
+            return;
+        }
+
         btn.disabled = true;
         btn.classList.add('opacity-50', 'cursor-not-allowed');
         content.classList.add('hidden');
         loading.classList.remove('hidden');
 
         const u = USUARIOS[currentUser];
-        const days = Object.keys(allGroupedData).sort().slice(-currentRange);
         
         let promptText = `Actúa como un experto en nutrición y analiza de manera directa y al punto mi progreso de los últimos ${currentRange} días.\n`;
         promptText += `Mi meta diaria actual es: Calorías: ${u.cal}kcal, Proteínas: ${u.prot}g, Carbos: ${u.carb}g, Grasas: ${u.grasas}g.\n\n`;
